@@ -1,0 +1,338 @@
+// YouTube Remove Liked Videos Script (CSP-Compatible)
+// Usage: open https://www.youtube.com/playlist?list=LL (Liked videos), open Console (F12), paste and run.
+// WARNING: This performs actions on your account. Use at your own risk.
+
+(async () => {
+  // Config
+  const MAX_REMOVE = 200;      // how many items to attempt
+  const DELAY_MS = 700;        // delay between operations
+  const WAIT_FOR_MENU = 500;   // wait after opening menu (increased)
+  const RETRIES = 3;           // retries for finding menu options
+
+  // Create a simple UI with DOM methods (CSP-compatible)
+  const createUI = () => {
+    // Create container
+    const div = document.createElement('div');
+    Object.assign(div.style, {
+      position: 'fixed',
+      bottom: '20px',
+      right: '20px',
+      width: '250px',
+      backgroundColor: '#f44336',
+      color: 'white',
+      padding: '10px',
+      borderRadius: '5px',
+      zIndex: '9999',
+      fontFamily: 'Arial, sans-serif',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.4)'
+    });
+    
+    // Create header
+    const header = document.createElement('div');
+    Object.assign(header.style, {
+      fontWeight: 'bold',
+      marginBottom: '8px',
+      display: 'flex',
+      justifyContent: 'space-between'
+    });
+    
+    const title = document.createElement('div');
+    title.textContent = 'Removing Liked Videos';
+    
+    const counter = document.createElement('div');
+    counter.id = 'yt-remove-count';
+    counter.textContent = '0/0';
+    
+    header.appendChild(title);
+    header.appendChild(counter);
+    div.appendChild(header);
+    
+    // Create progress bar container
+    const progressContainer = document.createElement('div');
+    Object.assign(progressContainer.style, {
+      height: '6px',
+      background: 'rgba(255,255,255,0.3)',
+      borderRadius: '3px',
+      marginBottom: '5px'
+    });
+    
+    // Create progress bar
+    const progressBar = document.createElement('div');
+    progressBar.id = 'yt-remove-progress';
+    Object.assign(progressBar.style, {
+      height: '100%',
+      width: '0%',
+      background: 'white',
+      borderRadius: '3px'
+    });
+    
+    progressContainer.appendChild(progressBar);
+    div.appendChild(progressContainer);
+    
+    // Create status text
+    const statusText = document.createElement('div');
+    statusText.id = 'yt-remove-status';
+    statusText.textContent = 'Starting...';
+    Object.assign(statusText.style, {
+      fontSize: '12px',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    });
+    
+    div.appendChild(statusText);
+    document.body.appendChild(div);
+    
+    return {
+      updateProgress: (current, total) => {
+        const percent = Math.min(100, Math.round((current / total) * 100));
+        const countEl = document.getElementById('yt-remove-count');
+        const progressEl = document.getElementById('yt-remove-progress');
+        if (countEl) countEl.textContent = `${current}/${total}`;
+        if (progressEl) progressEl.style.width = `${percent}%`;
+      },
+      updateStatus: (text) => {
+        const statusEl = document.getElementById('yt-remove-status');
+        if (statusEl) statusEl.textContent = text;
+      },
+      setComplete: (success, failed) => {
+        div.style.backgroundColor = success > 0 ? '#4caf50' : '#f44336';
+        const statusEl = document.getElementById('yt-remove-status');
+        if (statusEl) statusEl.textContent = `Complete: ${success} removed, ${failed} failed`;
+      }
+    };
+  };
+
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  
+  // Basic check: are we on the Liked videos / playlist page?
+  if (!/(\bplaylist\?list=LL\b)|liked videos/i.test(location.href + " " + (document.title || ''))) {
+    if (!confirm('This script should be run on your "Liked videos" playlist page (https://www.youtube.com/playlist?list=LL). Continue anyway?')) return;
+  }
+  
+  const ui = createUI();
+  ui.updateStatus("Loading videos...");
+  
+  // Try to load items by scrolling
+  try {
+    window.scrollTo(0, 0);
+    for (let i = 0; i < 8; i++) {
+      window.scrollBy(0, document.body.scrollHeight);
+      ui.updateStatus(`Loading videos (scroll ${i+1}/8)...`);
+      await wait(400);
+    }
+    window.scrollTo(0, 0);
+    await wait(500);
+  } catch (e) { console.error("Error scrolling:", e); }
+
+  // Collect playlist item elements (covers many UI variants)
+  const items = Array.from(document.querySelectorAll(
+    'ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-video-renderer, ytd-playlist-panel-video-renderer, ytd-compact-video-renderer'
+  ));
+
+  console.log(`[yt-remove-liked] Found ${items.length} playlist entries (will attempt up to ${Math.min(items.length, MAX_REMOVE)})`);
+  ui.updateStatus(`Found ${items.length} videos to process`);
+  ui.updateProgress(0, Math.min(items.length, MAX_REMOVE));
+
+  // Helper: find and click menu button for an item
+  const clickMenuButton = (item) => {
+    // Try multiple selectors for menu buttons (different YouTube UI variants)
+    const selectors = [
+      'button[aria-label="Action menu"]',
+      'button[aria-label="Menu"]',
+      'ytd-menu-renderer yt-icon-button#button',
+      'ytd-menu-renderer button#button',
+      'ytd-menu-renderer tp-yt-paper-icon-button#button',
+      'ytd-menu-renderer yt-icon-button',
+      'ytd-menu-renderer tp-yt-paper-icon-button',
+      'ytd-menu-renderer button',
+      'tp-yt-paper-icon-button[aria-label]',
+      'yt-icon-button[aria-label]',
+      'button#button',
+      '.dropdown-trigger'
+    ];
+    
+    for (const selector of selectors) {
+      const buttons = item.querySelectorAll(selector);
+      for (const btn of buttons) {
+        try { 
+          // Highlight the button briefly (debugging help)
+          btn.style.boxShadow = '0 0 0 2px red';
+          setTimeout(() => btn.style.boxShadow = '', 500);
+          
+          btn.click(); 
+          return true; 
+        } catch (e) { /* continue */ }
+      }
+    }
+    return false;
+  };
+
+  // Helper: find menu option by text (much more robust)
+  const findRemoveOption = async (retryCount = 0) => {
+    if (retryCount > 0) await wait(200); // Wait a bit on retries
+    
+    // Get ALL menu items from ALL dropdowns/menus
+    const menuCandidates = Array.from(document.querySelectorAll(
+      'ytd-menu-service-item-renderer, ytd-menu-navigation-item-renderer, tp-yt-paper-listbox tp-yt-paper-item, ytd-menu-popup-renderer yt-formatted-string, ytd-menu-popup-renderer div.ytd-menu-popup-renderer, ytd-menu-popup-renderer span, yt-formatted-string, ytd-menu-service-item-renderer yt-formatted-string'
+    ));
+    
+    // Common phrases for "remove from liked videos" in different languages
+    const removeRegexes = [
+      /remove from liked/i,
+      /remove from.*liked/i,
+      /remove.*liked/i,
+      /remove from.*liked videos/i,
+      /unlike/i,
+      /dislike/i,
+      /não gostei/i,           // Portuguese
+      /pašalinti.*patik/i,     // Lithuanian
+      /netink/i,               // Lithuanian
+      /atsisakyti/i,           // Lithuanian
+      /pašalinti/i,            // Lithuanian general "remove"
+      /удалить из понравившихся/i, // Russian
+      /entfernen/i,            // German
+      /remove.*saved/i,
+      /save to/i,              // If we don't find remove, try other menu items
+      /share/i,
+      /add to queue/i,
+      /report/i,
+      /don't recommend/i,
+      /remove/i                // Last resort
+    ];
+    
+    // Log all menu items for debugging
+    if (menuCandidates.length > 0) {
+      console.log("Menu items found:", menuCandidates.map(el => el.textContent.trim()).filter(t => t));
+    }
+    
+    // First pass: Look for exact matches
+    for (const el of menuCandidates) {
+      const txt = (el.textContent || '').trim();
+      if (!txt) continue;
+      
+      // Check for Remove/Unlike phrases
+      for (const rx of removeRegexes) {
+        if (rx.test(txt)) {
+          console.log(`Found menu item: "${txt}"`);
+          return el;
+        }
+      }
+    }
+    
+    // If nothing found and we have retries left, wait and try again
+    if (retryCount < RETRIES) {
+      console.log(`No remove option found, retry ${retryCount+1}/${RETRIES}`);
+      return await findRemoveOption(retryCount + 1);
+    }
+    
+    return null;
+  };
+
+  // Track results
+  let successful = 0;
+  let failed = 0;
+
+  // Main loop
+  for (let i = 0; i < items.length && i < MAX_REMOVE; i++) {
+    const item = items[i];
+    ui.updateProgress(i, Math.min(items.length, MAX_REMOVE));
+    
+    try {
+      // Try to get video title for better logging
+      let videoTitle = "Unknown";
+      try {
+        const titleEl = item.querySelector('#video-title, .title');
+        if (titleEl) videoTitle = titleEl.textContent.trim().substring(0, 30);
+      } catch (e) {}
+      
+      ui.updateStatus(`Processing: ${videoTitle}...`);
+      
+      // Scroll into view
+      item.scrollIntoView({ block: 'center', behavior: 'auto' });
+      await wait(300);
+
+      // Attempt to open the item's menu
+      const opened = clickMenuButton(item);
+      if (!opened) { 
+        console.log(`[yt-remove-liked] [${i+1}] No menu button found for "${videoTitle}"`);
+        failed++;
+        continue; 
+      }
+
+      await wait(WAIT_FOR_MENU);
+
+      // Find remove option and click it
+      const option = await findRemoveOption();
+      if (!option) {
+        // try clicking outside to close menu and continue
+        document.documentElement.click();
+        console.log(`[yt-remove-liked] [${i+1}] Remove option not found for "${videoTitle}"`);
+        failed++;
+        await wait(200);
+        continue;
+      }
+
+      // Highlight the option we found (helps with debugging)
+      option.style.backgroundColor = 'rgba(255,0,0,0.2)';
+      
+      // Try multiple click methods to ensure the option is clicked
+      let clicked = false;
+      
+      // Method 1: Direct click
+      try {
+        option.click();
+        clicked = true;
+      } catch (e) {
+        console.log("Direct click failed, trying alternatives");
+      }
+      
+      // Method 2: Find and click any parent that looks clickable
+      if (!clicked) {
+        let p = option.parentElement;
+        while (p && p !== document.body) {
+          if (p.tagName && /button|paper-item|a|div/i.test(p.tagName)) {
+            try { 
+              p.click(); 
+              clicked = true;
+              break; 
+            } catch (err) { /* continue */ }
+          }
+          p = p.parentElement;
+        }
+      }
+      
+      // Method 3: Try creating and dispatching a native click event
+      if (!clicked) {
+        try {
+          const event = new MouseEvent('click', {
+            view: window,
+            bubbles: true,
+            cancelable: true
+          });
+          option.dispatchEvent(event);
+          clicked = true;
+        } catch (e) { /* continue */ }
+      }
+
+      if (clicked) {
+        console.log(`[yt-remove-liked] [${i+1}] Successfully removed "${videoTitle}"`);
+        successful++;
+      } else {
+        console.log(`[yt-remove-liked] [${i+1}] All click methods failed for "${videoTitle}"`);
+        failed++;
+      }
+      
+      await wait(DELAY_MS);
+
+    } catch (err) {
+      console.error(`[yt-remove-liked] [${i+1}] Error:`, err);
+      failed++;
+      await wait(300);
+    }
+  }
+
+  ui.updateProgress(Math.min(items.length, MAX_REMOVE), Math.min(items.length, MAX_REMOVE));
+  ui.setComplete(successful, failed);
+  console.log(`[yt-remove-liked] Done! Successfully removed: ${successful}, Failed: ${failed}`);
+})();
