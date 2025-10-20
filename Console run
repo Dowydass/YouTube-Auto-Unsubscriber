@@ -1,0 +1,462 @@
+// YouTube Unsubscriber with Visual UI
+// Shows progress directly on screen + performs unsubscribes
+// Press ESC to stop anytime
+
+(async function() {
+  // Config
+  const DELAY_BETWEEN_CHANNELS = 600;    // ms between each channel processing
+  const WAIT_FOR_DIALOG = 500;           // ms to wait for dialog to appear
+  const WAIT_AFTER_CONFIRM = 800;        // ms to wait after confirming before next channel
+  
+  // Utils
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const log = (...args) => console.log("[YT-UNSUB]", ...args);
+  
+  // Create a visible UI directly on the YouTube page
+  function createVisualUI() {
+    const container = document.createElement('div');
+    Object.assign(container.style, {
+      position: 'fixed',
+      bottom: '20px',
+      right: '20px',
+      width: '300px',
+      backgroundColor: '#d00',
+      color: 'white',
+      padding: '15px',
+      borderRadius: '8px',
+      zIndex: '9999',
+      fontFamily: 'Arial, sans-serif',
+      boxShadow: '0 2px 10px rgba(0, 0, 0, 0.3)',
+      transition: 'all 0.3s ease'
+    });
+    
+    // Header
+    const header = document.createElement('div');
+    Object.assign(header.style, {
+      fontWeight: 'bold',
+      fontSize: '16px',
+      marginBottom: '10px',
+      display: 'flex',
+      justifyContent: 'space-between'
+    });
+    
+    const title = document.createElement('div');
+    title.textContent = 'YouTube Unsubscriber';
+    
+    const stopBtn = document.createElement('button');
+    stopBtn.textContent = 'STOP (ESC)';
+    Object.assign(stopBtn.style, {
+      border: 'none',
+      background: 'rgba(0,0,0,0.2)',
+      color: 'white',
+      padding: '2px 5px',
+      borderRadius: '3px',
+      cursor: 'pointer',
+      fontSize: '12px'
+    });
+    stopBtn.onclick = () => { shouldStop = true; updateStatus("Stopping..."); };
+    
+    header.appendChild(title);
+    header.appendChild(stopBtn);
+    container.appendChild(header);
+    
+    // Progress section
+    const progressSection = document.createElement('div');
+    Object.assign(progressSection.style, {
+      marginBottom: '10px'
+    });
+    
+    const progressBar = document.createElement('div');
+    Object.assign(progressBar.style, {
+      height: '10px',
+      backgroundColor: 'rgba(255,255,255,0.3)',
+      borderRadius: '5px',
+      overflow: 'hidden',
+      marginBottom: '5px'
+    });
+    
+    const progressFill = document.createElement('div');
+    Object.assign(progressFill.style, {
+      height: '100%',
+      backgroundColor: 'white',
+      width: '0%',
+      transition: 'width 0.2s'
+    });
+    
+    progressBar.appendChild(progressFill);
+    progressSection.appendChild(progressBar);
+    
+    const progressText = document.createElement('div');
+    Object.assign(progressText.style, {
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: '14px'
+    });
+    
+    const countText = document.createElement('div');
+    countText.textContent = '0/0 channels';
+    
+    const timeText = document.createElement('div');
+    timeText.textContent = '00:00';
+    
+    progressText.appendChild(countText);
+    progressText.appendChild(timeText);
+    progressSection.appendChild(progressText);
+    container.appendChild(progressSection);
+    
+    // Status section
+    const statusSection = document.createElement('div');
+    Object.assign(statusSection.style, {
+      marginBottom: '10px'
+    });
+    
+    const currentStatus = document.createElement('div');
+    currentStatus.textContent = 'Starting...';
+    Object.assign(currentStatus.style, {
+      fontSize: '14px',
+      fontWeight: 'bold',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    });
+    
+    statusSection.appendChild(currentStatus);
+    container.appendChild(statusSection);
+    
+    // Channel section
+    const channelSection = document.createElement('div');
+    
+    const channelLabel = document.createElement('div');
+    channelLabel.textContent = 'Current:';
+    Object.assign(channelLabel.style, {
+      fontSize: '12px',
+      opacity: '0.8'
+    });
+    
+    const channelName = document.createElement('div');
+    channelName.textContent = '-';
+    Object.assign(channelName.style, {
+      fontSize: '14px',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    });
+    
+    channelSection.appendChild(channelLabel);
+    channelSection.appendChild(channelName);
+    container.appendChild(channelSection);
+    
+    // Results section
+    const resultsSection = document.createElement('div');
+    Object.assign(resultsSection.style, {
+      marginTop: '10px',
+      fontSize: '13px',
+      display: 'flex',
+      justifyContent: 'space-between'
+    });
+    
+    const successCount = document.createElement('div');
+    successCount.textContent = 'Success: 0';
+    
+    const failCount = document.createElement('div');
+    failCount.textContent = 'Failed: 0';
+    
+    resultsSection.appendChild(successCount);
+    resultsSection.appendChild(failCount);
+    container.appendChild(resultsSection);
+    
+    document.body.appendChild(container);
+    
+    // UI update functions
+    function updateProgress(current, total) {
+      const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+      progressFill.style.width = `${percent}%`;
+      countText.textContent = `${current}/${total} channels`;
+    }
+    
+    function updateTime(seconds) {
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      timeText.textContent = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    
+    function updateChannel(name) {
+      channelName.textContent = name || '-';
+    }
+    
+    function updateStatus(status) {
+      currentStatus.textContent = status;
+    }
+    
+    function updateResults(success, fail) {
+      successCount.textContent = `Success: ${success}`;
+      failCount.textContent = `Failed: ${fail}`;
+      
+      // Change color based on success rate
+      const successRate = success / (success + fail || 1);
+      if (successRate > 0.8) {
+        container.style.backgroundColor = '#0a0';  // Good - green
+      } else if (successRate > 0.5) {
+        container.style.backgroundColor = '#d70';  // Mixed - orange
+      } else if (success + fail > 0) {
+        container.style.backgroundColor = '#d00';  // Poor - red
+      }
+    }
+    
+    function completeUI(success, fail, total, timeSeconds) {
+      updateProgress(success + fail, total);
+      updateTime(timeSeconds);
+      updateResults(success, fail);
+      updateChannel('Completed');
+      updateStatus('Finished!');
+      
+      // Add a close button
+      const closeBtn = document.createElement('button');
+      closeBtn.textContent = 'CLOSE';
+      Object.assign(closeBtn.style, {
+        marginTop: '10px',
+        width: '100%',
+        padding: '5px',
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        border: 'none',
+        borderRadius: '4px',
+        color: 'white',
+        fontWeight: 'bold',
+        cursor: 'pointer'
+      });
+      closeBtn.onclick = () => document.body.removeChild(container);
+      container.appendChild(closeBtn);
+    }
+    
+    return {
+      updateProgress,
+      updateTime,
+      updateChannel,
+      updateStatus,
+      updateResults,
+      completeUI
+    };
+  }
+  
+  // Stop mechanism
+  let shouldStop = false;
+  const escListener = e => {
+    if (e.key === "Escape") {
+      shouldStop = true;
+      log("STOPPING - ESC key pressed");
+    }
+  };
+  document.addEventListener("keydown", escListener);
+  
+  // Create UI first
+  const ui = createVisualUI();
+  
+  // Confirm start
+  log("YouTube Unsubscribe Script Starting...");
+  if (!confirm("This will unsubscribe from YouTube channels automatically.\nPress ESC to stop anytime.\n\nProceed?")) {
+    ui.updateStatus("Cancelled");
+    log("Operation cancelled by user");
+    return;
+  }
+  
+  // Start timer
+  const startTime = new Date();
+  const updateTimer = () => {
+    if (!shouldStop) {
+      const elapsed = Math.round((new Date() - startTime) / 1000);
+      ui.updateTime(elapsed);
+      setTimeout(updateTimer, 1000);
+    }
+  };
+  updateTimer();
+  
+  ui.updateStatus("Scanning page for channels...");
+  log("Scanning page for subscribed channels...");
+  
+  // Find all subscribe buttons (look for text like "Subscribed" or Lithuanian "Užprenumeruota")
+  const subscribeButtons = Array.from(document.querySelectorAll('ytd-subscribe-button-renderer'))
+    .filter(btn => {
+      const text = (btn.textContent || '').toLowerCase();
+      return text.includes('subscribed') || text.includes('prenumeruota') || text.includes('užprenumeruota');
+    });
+  
+  log(`Found ${subscribeButtons.length} channels to unsubscribe from`);
+  ui.updateStatus(`Found ${subscribeButtons.length} channels`);
+  ui.updateProgress(0, subscribeButtons.length);
+  
+  // Process channels
+  let processed = 0;
+  let succeeded = 0;
+  let failed = 0;
+  
+  for (let i = 0; i < subscribeButtons.length && !shouldStop; i++) {
+    const btn = subscribeButtons[i];
+    
+    // Get channel name if possible
+    let channelName = `Channel #${i+1}`;
+    try {
+      const container = btn.closest('ytd-channel-renderer, ytd-grid-channel-renderer, ytd-rich-item-renderer');
+      if (container) {
+        const nameEl = container.querySelector('#text, yt-formatted-string, a.yt-simple-endpoint');
+        if (nameEl) channelName = nameEl.textContent.trim();
+      }
+    } catch (e) {
+      log(`Couldn't get name for channel: ${e.message}`);
+    }
+    
+    ui.updateChannel(channelName);
+    ui.updateStatus(`Processing #${i+1}/${subscribeButtons.length}`);
+    log(`[${i+1}/${subscribeButtons.length}] Processing: "${channelName}"`);
+    
+    // STEP 1: Scroll to button and click to open dialog
+    try {
+      btn.scrollIntoView({behavior: 'auto', block: 'center'});
+      await wait(300);
+      
+      // Find and click inner button (try several selectors)
+      const innerButtons = [
+        ...Array.from(btn.querySelectorAll('button.yt-spec-button-shape-next')),
+        ...Array.from(btn.querySelectorAll('tp-yt-paper-button')),
+        ...Array.from(btn.querySelectorAll('button')),
+      ];
+      
+      let clicked = false;
+      for (const innerBtn of innerButtons) {
+        try {
+          innerBtn.click();
+          clicked = true;
+          break;
+        } catch {}
+      }
+      
+      if (!clicked) {
+        // Try clicking the main button
+        try {
+          btn.click();
+          clicked = true;
+        } catch {}
+      }
+      
+      if (!clicked) {
+        log(`Failed to click any button for "${channelName}"`);
+        failed++;
+        ui.updateResults(succeeded, failed);
+        continue;
+      }
+      
+      // STEP 2: Wait for dialog to appear
+      ui.updateStatus(`Waiting for dialog...`);
+      await wait(WAIT_FOR_DIALOG);
+      
+      // Find dialog
+      const dialog = document.querySelector('yt-confirm-dialog-renderer, tp-yt-paper-dialog[role="dialog"]');
+      if (!dialog) {
+        log(`No confirmation dialog appeared for "${channelName}"`);
+        failed++;
+        ui.updateResults(succeeded, failed);
+        continue;
+      }
+      
+      // STEP 3: Find and click confirm button in dialog
+      ui.updateStatus(`Confirming unsubscribe...`);
+      const allButtons = Array.from(dialog.querySelectorAll('button, tp-yt-paper-button'));
+      
+      if (!allButtons.length) {
+        log(`No buttons found in dialog for "${channelName}"`);
+        failed++;
+        ui.updateResults(succeeded, failed);
+        continue;
+      }
+      
+      // Try to find unsubscribe button by text content
+      let confirmBtn = allButtons.find(btn => {
+        const txt = (btn.textContent || '').toLowerCase();
+        return txt.includes('unsubscribe') || txt.includes('atsisakyti') || 
+               txt.includes('confirm') || txt.includes('yes');
+      });
+      
+      // Fallback to last button (usually the confirm/action button)
+      if (!confirmBtn && allButtons.length > 1) {
+        confirmBtn = allButtons[allButtons.length - 1];
+      } else if (!confirmBtn) {
+        confirmBtn = allButtons[0];
+      }
+      
+      // Click the confirm button
+      try {
+        confirmBtn.click();
+      } catch {}
+      
+      // Also try event
+      try {
+        const evt = new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          view: window
+        });
+        confirmBtn.dispatchEvent(evt);
+      } catch {}
+      
+      // Wait for processing
+      await wait(WAIT_AFTER_CONFIRM);
+      
+      // Check if dialog closed (success)
+      const dialogAfter = document.querySelector('yt-confirm-dialog-renderer, tp-yt-paper-dialog[role="dialog"]');
+      if (!dialogAfter) {
+        succeeded++;
+        log(`✓ Successfully unsubscribed from "${channelName}" (${succeeded}/${i+1})`);
+      } else {
+        failed++;
+        log(`⚠️ Dialog may not have closed for "${channelName}"`);
+      }
+      
+      ui.updateResults(succeeded, failed);
+      processed++;
+      ui.updateProgress(processed, subscribeButtons.length);
+      
+    } catch (err) {
+      log(`Error processing "${channelName}": ${err.message}`);
+      failed++;
+      ui.updateResults(succeeded, failed);
+    }
+    
+    // Delay before next channel
+    await wait(DELAY_BETWEEN_CHANNELS);
+  }
+  
+  // Cleanup
+  document.removeEventListener('keydown', escListener);
+  
+  // Calculate stats
+  const endTime = new Date();
+  const duration = Math.round((endTime - startTime) / 1000);
+  const minutes = Math.floor(duration / 60);
+  const seconds = duration % 60;
+  
+  // Final summary
+  log(`=== UNSUBSCRIBE SUMMARY ===`);
+  log(`Total channels processed: ${processed}/${subscribeButtons.length}`);
+  log(`Successfully unsubscribed: ${succeeded}`);
+  log(`Failed: ${failed}`);
+  log(`Time taken: ${minutes}m ${seconds}s`);
+  
+  // Complete the UI
+  ui.completeUI(succeeded, failed, subscribeButtons.length, duration);
+  
+  // Show alert with results
+  if (!shouldStop) {
+    alert(`YouTube Unsubscribe complete!\n\nProcessed: ${processed}/${subscribeButtons.length} channels\nSuccessfully unsubscribed: ${succeeded}\nFailed: ${failed}\n\nTime taken: ${minutes}m ${seconds}s`);
+  } else {
+    alert(`YouTube Unsubscribe stopped!\n\nProcessed: ${processed}/${subscribeButtons.length} channels\nSuccessfully unsubscribed: ${succeeded}\nFailed: ${failed}\n\nTime taken: ${minutes}m ${seconds}s`);
+  }
+  
+  // Return results object
+  return {
+    total: subscribeButtons.length,
+    processed,
+    succeeded, 
+    failed,
+    duration: `${minutes}m ${seconds}s`,
+    stoppedByUser: shouldStop
+  };
+})();
